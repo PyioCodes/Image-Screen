@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Image Screen — Drag, Resize & Coordinates</title>
+  <style>
+    :root{ --bg:#111; --panel:#121212; --muted:#bbb; --accent:#6cf; }
+    html,body{height:100%;margin:0;font-family:Inter,system-ui,Segoe UI,Roboto,Arial}
+    .app{display:flex;gap:16px;padding:16px;background:linear-gradient(180deg,#0b0b0b,#0f1112);height:100%;box-sizing:border-box}
+    .controls{width:320px;background:var(--panel);padding:12px;border-radius:12px;color:#eaeaea;box-shadow:0 6px 20px rgba(0,0,0,.6)}
+    .controls h2{margin:4px 0 10px;font-size:16px}
+    .controls label{display:block;font-size:13px;color:var(--muted);margin-top:8px}
+    .controls input[type="number"], .controls input[type="file"]{width:100%;padding:8px;margin-top:6px;border-radius:6px;border:1px solid rgba(255,255,255,.06);background:#0a0a0a;color:#fff}
+    .controls button{margin-top:10px;padding:8px 10px;border-radius:8px;border:0;background:var(--accent);color:#012}
+    .screen-wrap{flex:1;display:flex;flex-direction:column;gap:8px}
+    .screen-toolbar{display:flex;gap:8px;align-items:center}
+    .screen{background:linear-gradient(45deg,#0b1220, #071021);border-radius:10px;padding:12px;display:flex;align-items:center;justify-content:center}
+    .stage{position:relative;background:#0d0f12;border:2px dashed rgba(255,255,255,.04);overflow:hidden;width:800px;height:450px;margin:0 auto;border-radius:6px}
+    .img-wrapper{position:absolute;touch-action:none;user-select:none;border:1px solid rgba(255,255,255,.06);box-shadow:0 6px 18px rgba(0,0,0,.6);border-radius:4px;background:transparent}
+    .img-wrapper img{display:block;max-width:none;pointer-events:none;}
+    .handle{width:12px;height:12px;border-radius:2px;background:#fff;position:absolute;transform:translate(-50%,-50%);cursor:nwse-resize;opacity:.9}
+    .handle.tl{left:0;top:0;cursor:nwse-resize}
+    .handle.tr{right:0;top:0;cursor:nesw-resize}
+    .handle.bl{left:0;bottom:0;cursor:nesw-resize}
+    .handle.br{right:0;bottom:0;cursor:nwse-resize}
+    .meta{margin-top:8px;color:var(--muted);font-size:13px}
+    .item-row{display:flex;gap:8px;align-items:center}
+    .small{font-size:12px;color:var(--muted)}
+    .badge{background:rgba(255,255,255,.04);padding:6px 8px;border-radius:8px;font-weight:600}
+    footer{color:var(--muted);font-size:13px;margin-top:8px}
+    @media(max-width:900px){.app{flex-direction:column}.controls{width:auto}}
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="controls">
+      <h2>Screen settings</h2>
+      <label>Stage width (px)</label>
+      <input id="stageWidth" type="number" value="800" min="100" />
+      <label>Stage height (px)</label>
+      <input id="stageHeight" type="number" value="450" min="100" />
+      <button id="applyStage">Apply size</button>
+      <hr style="margin:12px 0;border:none;border-top:1px solid rgba(255,255,255,.03)" />
+      <h2>Load images</h2>
+      <label>Choose image file(s)</label>
+      <input id="fileInput" type="file" accept="image/*" multiple />
+      <div class="meta small">Each image is placed inside the stage and is draggable & resizable.</div>
+      <hr style="margin:12px 0;border:none;border-top:1px solid rgba(255,255,255,.03)" />
+      <h2>Selected object</h2>
+      <div id="selectedInfo" class="meta">No object selected</div>
+      <div style="margin-top:10px;display:flex;gap:8px">
+        <button id="deleteBtn">Delete</button>
+        <button id="centerBtn">Center</button>
+        <button id="lockBtn">Lock</button>
+      </div>
+      <button id="exportBtn" style="margin-top:16px;background:#4cafef">Export Positions</button>
+      <footer>Tip: drag image to move. Drag corner handles to resize. Coordinates are relative to the stage top-left.</footer>
+    </div>
+    <div class="screen-wrap">
+      <div class="screen-toolbar">
+        <div class="badge">Preview</div>
+        <div class="small" style="margin-left:8px;color:var(--muted)">Stage area below</div>
+      </div>
+      <div class="screen">
+        <div id="stage" class="stage" tabindex="0" aria-label="image stage"></div>
+      </div>
+      <div id="exportOutput" class="meta"></div>
+    </div>
+  </div>
+  <script>
+    const $ = (s,root=document)=>root.querySelector(s);
+    const $$ = (s,root=document)=>Array.from(root.querySelectorAll(s));
+    const stage = $('#stage');
+    const fileInput = $('#fileInput');
+    const stageWidthInput = $('#stageWidth');
+    const stageHeightInput = $('#stageHeight');
+    const applyStage = $('#applyStage');
+    const selectedInfo = $('#selectedInfo');
+    const deleteBtn = $('#deleteBtn');
+    const centerBtn = $('#centerBtn');
+    const lockBtn = $('#lockBtn');
+    const exportBtn = $('#exportBtn');
+    const exportOutput = $('#exportOutput');
+    let selected = null;
+    let isLocked = false;
+    function setStageSize(w,h){ stage.style.width = w + 'px'; stage.style.height = h + 'px'; }
+    setStageSize(parseInt(stageWidthInput.value,10), parseInt(stageHeightInput.value,10));
+    applyStage.addEventListener('click', ()=>{ setStageSize(parseInt(stageWidthInput.value,10)||100, parseInt(stageHeightInput.value,10)||100); keepAllInside(); });
+    function keepAllInside(){ $$('.img-wrapper').forEach(wrap=>{ wrap.style.left=Math.max(0,Math.min(stage.clientWidth-wrap.clientWidth,wrap.offsetLeft))+'px'; wrap.style.top=Math.max(0,Math.min(stage.clientHeight-wrap.clientHeight,wrap.offsetTop))+'px'; }); if(selected) updateSelectedInfo(selected); }
+    function createImageWrapper(imgSrc,naturalW,naturalH){
+      const wrap=document.createElement('div');wrap.className='img-wrapper';wrap.style.left='20px';wrap.style.top='20px';wrap.style.width=Math.min(240,naturalW)+'px';wrap.style.height=Math.min(160,naturalH)+'px';
+      const img=document.createElement('img');img.src=imgSrc;img.draggable=false;img.style.width='100%';img.style.height='100%';img.style.objectFit='contain';
+      const handles=['tl','tr','bl','br'].map(c=>{const h=document.createElement('div');h.className='handle '+c;wrap.appendChild(h);return h;});wrap.appendChild(img);
+      stage.appendChild(wrap);makeDraggable(wrap);makeResizable(wrap);wrap.addEventListener('mousedown',e=>{if(!e.target.classList.contains('handle'))selectObject(wrap);});wrap.addEventListener('touchstart',()=>selectObject(wrap));return wrap;}
+    function selectObject(wrap){if(selected===wrap)return;if(selected)selected.style.outline='';selected=wrap;selected.style.outline='2px solid rgba(108,200,255,.18)';isLocked=selected.dataset.locked==='true';updateSelectedInfo(selected);}
+    function updateSelectedInfo(wrap){if(!wrap){selectedInfo.textContent='No object selected';return;}const x=parseInt(wrap.style.left||0,10);const y=parseInt(wrap.style.top||0,10);const w=wrap.clientWidth;const h=wrap.clientHeight;selectedInfo.innerHTML=`<div class="item-row"><strong>Position:</strong>&nbsp;<span class="small">x:${x}px, y:${y}px</span></div><div class="item-row"><strong>Size:</strong>&nbsp;<span class="small">${w}px × ${h}px</span></div><div class="item-row"><strong>Locked:</strong>&nbsp;<span class="small">${isLocked}</span></div>`;}
+    deleteBtn.addEventListener('click',()=>{if(!selected)return;selected.remove();selected=null;updateSelectedInfo(null);});
+    centerBtn.addEventListener('click',()=>{if(!selected)return;selected.style.left=(stage.clientWidth-selected.clientWidth)/2+'px';selected.style.top=(stage.clientHeight-selected.clientHeight)/2+'px';updateSelectedInfo(selected);});
+    lockBtn.addEventListener('click',()=>{if(!selected)return;isLocked=!isLocked;selected.dataset.locked=isLocked?'true':'false';updateSelectedInfo(selected);});
+    function makeDraggable(el){let dragging=false,startX=0,startY=0,origX=0,origY=0;function onDown(e){if(e.target.classList.contains('handle'))return;if(el.dataset.locked==='true')return;dragging=true;const p=getPointer(e);startX=p.x;startY=p.y;origX=el.offsetLeft;origY=el.offsetTop;document.addEventListener('mousemove',onMove);document.addEventListener('mouseup',onUp);document.addEventListener('touchmove',onMove,{passive:false});document.addEventListener('touchend',onUp);}function onMove(e){if(!dragging)return;e.preventDefault();const p=getPointer(e);let nx=origX+(p.x-startX);let ny=origY+(p.y-startY);nx=Math.min(Math.max(0,nx),stage.clientWidth-el.clientWidth);ny=Math.min(Math.max(0,ny),stage.clientHeight-el.clientHeight);el.style.left=nx+'px';el.style.top=ny+'px';if(el===selected)updateSelectedInfo(el);}function onUp(){dragging=false;document.removeEventListener('mousemove',onMove);document.removeEventListener('mouseup',onUp);document.removeEventListener('touchmove',onMove);document.removeEventListener('touchend',onUp);}el.addEventListener('mousedown',onDown);el.addEventListener('touchstart',onDown,{passive:false});}
+    function makeResizable(el){$$('.handle',el).forEach(h=>{let resizing=false,startX=0,startY=0,origW=0,origH=0,origL=0,origT=0,which='';function down(e){if(el.dataset.locked==='true')return;resizing=true;which=h.classList.contains('tl')?'tl':h.classList.contains('tr')?'tr':h.classList.contains('bl')?'bl':'br';const p=getPointer(e);startX=p.x;startY=p.y;origW=el.clientWidth;origH=el.clientHeight;origL=el.offsetLeft;origT=el.offsetTop;document.addEventListener('mousemove',move);document.addEventListener('mouseup',up);document.addEventListener('touchmove',move,{passive:false});document.addEventListener('touchend',up);e.stopPropagation();e.preventDefault();}function move(e){if(!resizing)return;e.preventDefault();const p=getPointer(e);const dx=p.x-startX;const dy=p.y-startY;let newW=origW,newH=origH,newL=origL,newT=origT;const minSize=24;if(which==='br'){newW=Math.max(minSize,origW+dx);newH=Math.max(minSize,origH+dy);}else if(which==='tr'){newW=Math.max(minSize,origW+dx);newH=Math.max(minSize,origH-dy);newT=origT+dy;}else if(which==='bl'){newW=Math.max(minSize,origW-dx);newH=Math.max(minSize,origH+dy);newL=origL+dx;}else if(which==='tl'){newW=Math.max(minSize,origW-dx);newH=Math.max(minSize,origH-dy);newL=origL+dx;newT=origT+dy;}if(newL<0){newW+=newL;newL=0;}if(newT<0){newH+=newT;newT=0;}if(newL+newW>stage.clientWidth)newW=stage.clientWidth-newL;if(newT+newH>stage.clientHeight)newH=stage.clientHeight-newT;el.style.width=newW+'px';el.style.height=newH+'px';el.style.left=newL+'px';el.style.top=newT+'px';if(el===selected)updateSelectedInfo(el);}function up(){resizing=false;document.removeEventListener('mousemove',move);document.removeEventListener('mouseup',up);document.removeEventListener('touchmove',move);document.removeEventListener('touchend',up);}h.addEventListener('mousedown',down);h.addEventListener('touchstart',down,{passive:false});});}
+    function getPointer(e){if(e.touches&&e.touches[0])return{x:e.touches[0].clientX,y:e.touches[0].clientY};return{x:e.clientX,y:e.clientY};}
+    fileInput.addEventListener('change',async ev=>{for(const f of ev.target.files){if(!f.type.startsWith('image/'))continue;const dataUrl=await readFileAsDataURL(f);const tmp=new Image();tmp.src=dataUrl;await new Promise(r=>tmp.onload=r);const wrap=createImageWrapper(dataUrl,tmp.naturalWidth,tmp.naturalHeight);selectObject(wrap);}fileInput.value='';});
+    function readFileAsDataURL(file){return new Promise((res,rej)=>{const r=new FileReader();r.onload=()=>res(r.result);r.onerror=rej;r.readAsDataURL(file);});}
+    stage.addEventListener('mousedown',e=>{if(e.target===stage){if(selected){selected.style.outline='';selected=null;updateSelectedInfo(null);}}});
+    window.addEventListener('keydown',e=>{if(!selected)return;if(selected.dataset.locked==='true')return;const step=e.shiftKey?10:1;if(e.key==='ArrowLeft'){selected.style.left=Math.max(0,selected.offsetLeft-step)+'px';updateSelectedInfo(selected);}if(e.key==='ArrowRight'){selected.style.left=Math.min(stage.clientWidth-selected.clientWidth,selected.offsetLeft+step)+'px';updateSelectedInfo(selected);}if(e.key==='ArrowUp'){selected.style.top=Math.max(0,selected.offsetTop-step)+'px';updateSelectedInfo(selected);}if(e.key==='ArrowDown'){selected.style.top=Math.min(stage.clientHeight-selected.clientHeight,selected.offsetTop+step)+'px';updateSelectedInfo(selected);}});
+    window.addEventListener('resize',keepAllInside);
+    stage.addEventListener('click',e=>{const wrapper=e.target.closest('.img-wrapper');if(wrapper)selectObject(wrapper);});
+    exportBtn.addEventListener('click',()=>{const data=$$('.img-wrapper').map((el,i)=>({id:i+1,x:parseInt(el.style.left||0),y:parseInt(el.style.top||0),width:el.clientWidth,height:el.clientHeight}));exportOutput.textContent=JSON.stringify(data,null,2);});
+  </script>
+</body>
+</html>
